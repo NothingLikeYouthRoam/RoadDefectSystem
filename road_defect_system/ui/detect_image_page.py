@@ -1,9 +1,11 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox,
-    QPushButton, QTableWidget, QTableWidgetItem, QGridLayout, QSplitter
+    QPushButton, QTableWidget, QTableWidgetItem, QGridLayout, QSplitter,
+    QFileDialog, QMessageBox, QProgressDialog
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtWidgets import QApplication
 from styles import AppStyles
 
 
@@ -58,6 +60,7 @@ class DetectImagePage(QWidget):
 
         btn_configs = [
             ('打开图片', 'outline', self._on_open_image),
+            ('批量检测', 'success', self._on_batch_detect),
             ('开始检测', 'primary', self._on_start_detect),
             ('导出图片', 'ghost', self._on_export_image),
             ('清除', 'ghost', self._on_clear),
@@ -114,6 +117,13 @@ class DetectImagePage(QWidget):
             card = AppStyles.create_stat_card(title, value, color)
             self.stat_labels[key] = card['value']
             stats_layout.addWidget(card['widget'], idx // 2, idx % 2)
+
+        # 严重程度卡片（占满一行）
+        severity_card = AppStyles.create_stat_card('严重程度', '--', '#8B9AB5')
+        self.stat_labels['severity'] = severity_card['value']
+        self._severity_widget = severity_card['widget']
+        stats_layout.addWidget(severity_card['widget'], 2, 0, 1, 2)
+
         layout.addWidget(stats_group)
 
         # 类别分布图表
@@ -295,6 +305,13 @@ class DetectImagePage(QWidget):
             max_conf = max(confidences)
             self._update_stats(total, len(class_set), avg_conf, max_conf)
 
+            # 更新严重程度
+            from utils.image_utils import get_severity
+            sev_text, sev_color = get_severity(total)
+            self.stat_labels['severity'].setText(sev_text)
+            self.stat_labels['severity'].setStyleSheet(f'color: {sev_color}; border: none;')
+            self._severity_widget.setStyleSheet(AppStyles.get_stat_card_style(sev_color))
+
             # 更新表格
             self.result_table.setRowCount(total)
             for row, d in enumerate(detections):
@@ -402,11 +419,174 @@ class DetectImagePage(QWidget):
         else:
             QMessageBox.warning(self, '失败', '导出失败，请检查路径')
 
+    def _on_batch_detect(self):
+        """批量检测：选择文件夹，逐个处理所有图片"""
+        folder = QFileDialog.getExistingDirectory(self, '选择图片文件夹')
+        if not folder:
+            return
+
+        # 扫描图片文件
+        import os
+        valid_exts = {'.png', '.jpg', '.jpeg', '.bmp'}
+        image_files = []
+        for fname in sorted(os.listdir(folder)):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in valid_exts:
+                image_files.append(os.path.join(folder, fname))
+
+        if not image_files:
+            QMessageBox.information(self, '提示', '所选文件夹中没有支持的图片文件')
+            return
+
+        # 确保检测器已加载
+        from core.detector import RoadDefectDetector
+        detector = RoadDefectDetector.get_instance()
+        if not detector._model:
+            model_path = 'model/best.pt'
+            if not os.path.exists(model_path):
+                model_path = 'models/best.pt'
+            if not os.path.exists(model_path):
+                QMessageBox.warning(self, '错误',
+                                    f'模型文件不存在: model/best.pt 或 models/best.pt\n请先在模型管理中加载模型')
+                return
+            try:
+                detector.load_model(model_path)
+            except Exception as e:
+                QMessageBox.critical(self, '错误', f'模型加载失败: {e}')
+                return
+
+        # 进度对话框
+        progress = QProgressDialog('正在批量检测...', '取消', 0, len(image_files), self)
+        progress.setWindowTitle('批量检测')
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+
+        total_objects = 0
+        class_counter = {}
+        processed = 0
+        cancelled = False
+
+        for i, img_path in enumerate(image_files):
+            if progress.wasCanceled():
+                cancelled = True
+                break
+
+            progress.setLabelText(f'检测中 ({i + 1}/{len(image_files)}): {os.path.basename(img_path)}')
+            progress.setValue(i)
+            QApplication.processEvents()
+
+            try:
+                import cv2
+                import json
+                from utils.image_utils import extract_gps
+                from database.db_manager import DatabaseManager
+                from database.models import DetectionRecord
+
+                img = cv2.imread(img_path)
+                if img is None:
+                    continue
+
+                result = detector.detect(img)
+                if result is None:
+                    continue
+
+                detections, _ = detector.parse_results(result)
+                if not detections:
+                    # 即使没有检测结果也记录（0 个目标）
+                    gps = extract_gps(img_path)
+                    class_dist = ''
+                    details = '[]'
+                    record = DetectionRecord(
+                        type='image',
+                        source=os.path.basename(img_path),
+                        model_name='best.pt',
+                        total_objects=0,
+                        class_distribution=class_dist,
+                        details=details,
+                        latitude=gps[0] if gps else None,
+                        longitude=gps[1] if gps else None,
+                    )
+                    db = DatabaseManager()
+                    db.add_record(record)
+                    processed += 1
+                    continue
+
+                total_objects += len(detections)
+
+                # 统计类别
+                for d in detections:
+                    name = d['class_name']
+                    class_counter[name] = class_counter.get(name, 0) + 1
+
+                # 生成类别分布字符串
+                local_count = {}
+                for d in detections:
+                    local_count[d['class_name']] = local_count.get(d['class_name'], 0) + 1
+                class_dist = ', '.join(f"{k}:{v}" for k, v in sorted(local_count.items()))
+
+                details_json = json.dumps([
+                    {
+                        'class': d['class_name'],
+                        'confidence': round(d['confidence'], 3),
+                        'bbox': list(d['bbox'])
+                    }
+                    for d in detections
+                ], ensure_ascii=False)
+
+                # 提取 GPS
+                gps = extract_gps(img_path)
+
+                # 保存到数据库
+                record = DetectionRecord(
+                    type='image',
+                    source=os.path.basename(img_path),
+                    model_name='best.pt',
+                    total_objects=len(detections),
+                    class_distribution=class_dist,
+                    details=details_json,
+                    latitude=gps[0] if gps else None,
+                    longitude=gps[1] if gps else None,
+                )
+                db = DatabaseManager()
+                db.add_record(record)
+                processed += 1
+
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                continue
+
+        progress.setValue(len(image_files))
+        progress.close()
+
+        if not cancelled:
+            # 构建汇总信息
+            class_lines = '\n'.join(f'  {k}: {v}' for k, v in sorted(class_counter.items()))
+            if not class_lines:
+                class_lines = '  (无检出)'
+
+            summary = (
+                f'批量检测完成\n\n'
+                f'总图片数: {len(image_files)}\n'
+                f'成功处理: {processed}\n'
+                f'检出目标总数: {total_objects}\n\n'
+                f'各类型分布:\n{class_lines}'
+            )
+            QMessageBox.information(self, '批量检测完成', summary)
+
     def _on_clear(self):
         self._image_path = None
         self._annotated_image = None
         self._gps = None
         self._update_stats(0, 0, 0.0, 0.0)
+
+        # 重置严重程度卡片
+        self.stat_labels['severity'].setText('--')
+        self.stat_labels['severity'].setStyleSheet('color: #8B9AB5; border: none;')
+        self._severity_widget.setStyleSheet(AppStyles.get_stat_card_style('#8B9AB5'))
+
         c = AppStyles.COLORS
         self.gps_label.setText('无位置信息')
         self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')

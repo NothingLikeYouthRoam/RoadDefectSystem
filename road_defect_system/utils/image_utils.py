@@ -230,6 +230,32 @@ def get_video_info(video_path: str) -> dict:
     return info
 
 
+def get_severity(total_objects: int) -> tuple:
+    """返回 (等级文字, 颜色hex)
+
+    根据检测到的目标总数判定缺陷严重程度:
+      - 总数 <= 2 : ('轻微', '#10B981')
+      - 总数 <= 5 : ('中等', '#F59E0B')
+      - 总数 >  5 : ('严重', '#EF4444')
+    """
+    if total_objects <= 2:
+        return ('轻微', '#10B981')
+    elif total_objects <= 5:
+        return ('中等', '#F59E0B')
+    else:
+        return ('严重', '#EF4444')
+
+
+def get_severity_color(severity: str) -> str:
+    """返回严重程度对应的颜色代码"""
+    severity_colors = {
+        '轻微': '#10B981',
+        '中等': '#F59E0B',
+        '严重': '#EF4444',
+    }
+    return severity_colors.get(severity, '#8B9AB5')
+
+
 def calculate_iou(box1: List[float], box2: List[float]) -> float:
     """计算两个框的IoU"""
     x1_min, y1_min, x1_max, y1_max = box1
