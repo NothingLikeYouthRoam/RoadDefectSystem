@@ -376,6 +376,10 @@ class HistoryPage(QWidget):
                 dh += f'<tr style="border-bottom:1px solid {c["border"]};"><td style="padding:3px;color:{c["text_primary"]};">{d.get("class","--")}</td><td style="padding:3px;color:{c["success"]};">{d.get("confidence",0):.3f}</td><td style="padding:3px;color:{c["text_primary"]};font-size:8pt;">{bs}</td></tr>'
             dh += '</table>'
 
+        gps_html = ''
+        if r.latitude is not None and r.longitude is not None:
+            gps_html = f'<p><b style="color:{c["text_primary"]};">GPS:</b> <span style="color:{c["accent_cyan"]};">{r.latitude:.6f}, {r.longitude:.6f}</span></p>'
+
         self.detail_text.setHtml(f'''<div style="color:{c["text_secondary"]};font-size:9pt;padding:8px;">
             <p><b style="color:{c["text_primary"]};">ID:</b> {r.id}</p>
             <p><b style="color:{c["text_primary"]};">时间:</b> {r.timestamp or "--"}</p>
@@ -384,7 +388,7 @@ class HistoryPage(QWidget):
             <p><b style="color:{c["text_primary"]};">模型:</b> {r.model_name or "--"}</p>
             <p><b style="color:{c["text_primary"]};">检测数:</b> <span style="color:{c["success"]};font-weight:bold;">{r.total_objects}</span></p>
             <p><b style="color:{c["text_primary"]};">类别分布:</b> {r.class_distribution or "--"}</p>
-            <hr style="border:1px solid {c["border"]};">{dh}</div>''')
+            {gps_html}<hr style="border:1px solid {c["border"]};">{dh}</div>''')
 
     def _on_delete_record(self):
         sel = self.history_table.selectedItems()

@@ -18,6 +18,8 @@ class DetectionRecord:
     total_objects: int = 0
     class_distribution: str = ""  # "Manhole:2, Patch-Crack:2"
     details: str = ""  # JSON格式存储详细检测结果
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     def __post_init__(self):
         if self.timestamp is None:

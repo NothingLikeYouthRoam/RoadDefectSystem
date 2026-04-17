@@ -1,7 +1,9 @@
 pyqt6
+PyQt6-WebEngine
 matplotlib
 numpy
 pandas
 opencv-python
 ultralytics
 requests
+folium

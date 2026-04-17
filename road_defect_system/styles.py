@@ -156,6 +156,33 @@ class AppStyles:
             p.setPen(pen2)
             p.drawLine(int(s*0.5), int(s*0.35), int(s*0.5), int(s*0.8))
 
+        elif icon_type == 'map':
+            # 折叠地图图标
+            p.setPen(QPen(color, max(1, s/14)))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            # 左页
+            p.drawLine(int(m + s*0.05), int(m + s*0.15), int(m + s*0.05), int(s - m - s*0.1))
+            # 右页
+            p.drawLine(int(s - m - s*0.05), int(m + s*0.15), int(s - m - s*0.05), int(s - m - s*0.1))
+            # 中折线
+            p.drawLine(int(s*0.5), int(m), int(s*0.5), int(s - m))
+            # 顶部/底部折线
+            p.drawLine(int(m + s*0.05), int(m + s*0.15), int(s*0.5), int(m))
+            p.drawLine(int(s*0.5), int(m), int(s - m - s*0.05), int(m + s*0.15))
+            p.drawLine(int(m + s*0.05), int(s - m - s*0.1), int(s*0.5), int(s - m))
+            p.drawLine(int(s*0.5), int(s - m), int(s - m - s*0.05), int(s - m - s*0.1))
+            # 定位标记
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(color))
+            cx, cy = int(s*0.38), int(s*0.48)
+            r2 = max(2, s * 0.06)
+            p.drawEllipse(int(cx - r2), int(cy - r2*2.5), int(2*r2), int(2*r2))
+            p.drawPolygon(QPolygonF([
+                QPointF(cx - r2, cy - r2*0.5),
+                QPointF(cx + r2, cy - r2*0.5),
+                QPointF(cx, cy + r2*1.5),
+            ]))
+
         elif icon_type == 'chart_placeholder':
             p.drawRoundedRect(int(m), int(m), int(s - 2*m), int(s - 2*m), 4, 4)
             p.setPen(QPen(color, max(1.5, s/14)))

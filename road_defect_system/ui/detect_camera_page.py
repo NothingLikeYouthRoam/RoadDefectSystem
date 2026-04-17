@@ -50,6 +50,7 @@ class DetectCameraPage(QWidget):
         self._is_detecting = False
         self._is_paused = False
         self._detect_busy = False
+        self._video_source = None  # 视频文件路径（模拟摄像头）
         self._frame_count = 0
         self._max_detections = 0
         self._frames_with_detections = 0
@@ -90,6 +91,7 @@ class DetectCameraPage(QWidget):
 
         btn_configs = [
             ('开启摄像头', 'outline', self._on_start_camera),
+            ('打开视频', 'outline', self._on_open_video),
             ('开始检测', 'primary', self._on_start_detect),
             ('暂停', 'ghost', self._on_pause),
             ('停止', 'ghost', self._on_stop),
@@ -257,6 +259,35 @@ class DetectCameraPage(QWidget):
         )
         label.setPixmap(scaled)
 
+    def _on_open_video(self):
+        """用视频文件模拟摄像头输入"""
+        from PyQt6.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, '选择视频文件', '', '视频文件 (*.mp4 *.avi *.mov *.mkv)')
+        if not file_path:
+            return
+
+        self._on_stop()
+        self._video_source = file_path
+        self._cap = cv2.VideoCapture(file_path)
+        if not self._cap.isOpened():
+            self.status_indicator.set_status('error')
+            self.status_text.setText('打开失败')
+            QMessageBox.warning(self, '错误', '无法打开视频文件')
+            return
+
+        self.status_indicator.set_status('connected')
+        self.status_text.setText(os.path.basename(file_path))
+        w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.info_labels['resolution'].setText(f'{w}x{h}')
+
+        self._is_detecting = False
+        self._is_paused = False
+        self._fps_start_time = time.time()
+        self._fps_frame_count = 0
+        self._timer.start(33)
+
     def _on_start_camera(self):
         self._on_stop()
 
@@ -284,7 +315,7 @@ class DetectCameraPage(QWidget):
 
     def _on_start_detect(self):
         if self._cap is None or not self._cap.isOpened():
-            QMessageBox.information(self, '提示', '请先开启摄像头')
+            QMessageBox.information(self, '提示', '请先开启摄像头或打开视频文件')
             return
 
         # 确保模型已加载
@@ -321,6 +352,10 @@ class DetectCameraPage(QWidget):
 
         ret, frame = self._cap.read()
         if not ret:
+            # 视频文件播放完毕
+            if self._video_source:
+                self._on_stop()
+                QMessageBox.information(self, '完成', '视频播放完毕')
             return
 
         # FPS 计算
@@ -405,6 +440,7 @@ class DetectCameraPage(QWidget):
         self._is_detecting = False
         self._is_paused = False
         self._detect_busy = False
+        self._video_source = None
         if self._cap is not None:
             self._cap.release()
             self._cap = None
@@ -433,10 +469,13 @@ class DetectCameraPage(QWidget):
                 for d in unique_dets
             ], ensure_ascii=False)
 
-            cam_idx = self.camera_combo.currentIndex()
+            if self._video_source:
+                source = os.path.basename(self._video_source)
+            else:
+                source = f'摄像头 {self.camera_combo.currentIndex()}'
             record = DetectionRecord(
                 type='camera',
-                source=f'摄像头 {cam_idx}',
+                source=source,
                 model_name='best.pt',
                 total_objects=len(unique_dets),
                 class_distribution=class_dist,

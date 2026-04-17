@@ -8,6 +8,49 @@ from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt
 
 
+def extract_gps(image_path: str) -> Optional[Tuple[float, float]]:
+    """从图片 EXIF 中提取 GPS 坐标，返回 (latitude, longitude) 或 None"""
+    try:
+        from PIL import Image
+        from PIL.ExifTags import Base as ExifBase, GPSTAGS
+        img = Image.open(image_path)
+        exif = img.getexif()
+        if not exif:
+            return None
+
+        gps_ifd = None
+        for tag_id, value in exif.items():
+            if tag_id == ExifBase.GPSInfo:
+                gps_ifd = value
+                break
+        if not gps_ifd:
+            return None
+
+        # gps_ifd 可能是 dict 或 int (offset)
+        if isinstance(gps_ifd, int):
+            return None
+
+        def _dms_to_dd(dms, ref):
+            d, m, s = [float(v) if isinstance(v, (int, float)) else float(v.num) / float(v.den) for v in dms]
+            dd = d + m / 60.0 + s / 3600.0
+            if ref in ('S', 'W'):
+                dd = -dd
+            return dd
+
+        lat_dms = gps_ifd.get(2)
+        lat_ref = gps_ifd.get(1)
+        lon_dms = gps_ifd.get(4)
+        lon_ref = gps_ifd.get(3)
+
+        if lat_dms and lat_ref and lon_dms and lon_ref:
+            lat = _dms_to_dd(lat_dms, lat_ref)
+            lon = _dms_to_dd(lon_dms, lon_ref)
+            return (lat, lon)
+    except Exception:
+        pass
+    return None
+
+
 def numpy_to_qimage(image: np.ndarray) -> QImage:
     """将numpy数组转换为QImage"""
     if image is None:

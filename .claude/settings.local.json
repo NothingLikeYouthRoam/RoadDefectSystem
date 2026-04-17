@@ -39,7 +39,8 @@
       "Bash(cmd.exe *)",
       "Bash(/d/Python/proj/.venv/Scripts/python.exe *)",
       "WebSearch",
-      "Bash(D:/Python/proj/.venv/Scripts/python.exe -c ' *)"
+      "Bash(D:/Python/proj/.venv/Scripts/python.exe -c ' *)",
+      "Bash(D:/Python/proj/.venv/Scripts/pip.exe install *)"
     ]
   }
 }

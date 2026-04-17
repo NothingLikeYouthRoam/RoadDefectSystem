@@ -27,6 +27,21 @@ class DatabaseManager:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @staticmethod
+    def _row_to_record(row) -> DetectionRecord:
+        return DetectionRecord(
+            id=row['id'],
+            timestamp=row['timestamp'],
+            type=row['type'],
+            source=row['source'],
+            model_name=row['model_name'],
+            total_objects=row['total_objects'],
+            class_distribution=row['class_distribution'],
+            details=row['details'],
+            latitude=row['latitude'] if 'latitude' in row.keys() else None,
+            longitude=row['longitude'] if 'longitude' in row.keys() else None,
+        )
+
     def _init_database(self):
         """初始化数据库表"""
         conn = self._get_connection()
@@ -41,7 +56,9 @@ class DatabaseManager:
                 model_name TEXT,
                 total_objects INTEGER DEFAULT 0,
                 class_distribution TEXT,
-                details TEXT
+                details TEXT,
+                latitude REAL,
+                longitude REAL
             )
         """)
 
@@ -54,6 +71,14 @@ class DatabaseManager:
                 create_time DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # 迁移：为旧表添加 GPS 列
+        cursor.execute("PRAGMA table_info(detection_history)")
+        columns = {row[1] for row in cursor.fetchall()}
+        if 'latitude' not in columns:
+            cursor.execute("ALTER TABLE detection_history ADD COLUMN latitude REAL")
+        if 'longitude' not in columns:
+            cursor.execute("ALTER TABLE detection_history ADD COLUMN longitude REAL")
 
         # 预置管理员账号
         cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
@@ -72,9 +97,9 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         cursor.execute("""
-            INSERT INTO detection_history 
-            (timestamp, type, source, model_name, total_objects, class_distribution, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO detection_history
+            (timestamp, type, source, model_name, total_objects, class_distribution, details, latitude, longitude)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record.timestamp,
             record.type,
@@ -82,7 +107,9 @@ class DatabaseManager:
             record.model_name,
             record.total_objects,
             record.class_distribution,
-            record.details
+            record.details,
+            record.latitude,
+            record.longitude
         ))
         
         record_id = cursor.lastrowid
@@ -105,19 +132,7 @@ class DatabaseManager:
         rows = cursor.fetchall()
         conn.close()
         
-        records = []
-        for row in rows:
-            records.append(DetectionRecord(
-                id=row['id'],
-                timestamp=row['timestamp'],
-                type=row['type'],
-                source=row['source'],
-                model_name=row['model_name'],
-                total_objects=row['total_objects'],
-                class_distribution=row['class_distribution'],
-                details=row['details']
-            ))
-        
+        records = [self._row_to_record(row) for row in rows]
         return records
 
     def search_records(self, keyword: str = "", record_type: str = "all") -> List[DetectionRecord]:
@@ -142,21 +157,7 @@ class DatabaseManager:
         cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
-        
-        records = []
-        for row in rows:
-            records.append(DetectionRecord(
-                id=row['id'],
-                timestamp=row['timestamp'],
-                type=row['type'],
-                source=row['source'],
-                model_name=row['model_name'],
-                total_objects=row['total_objects'],
-                class_distribution=row['class_distribution'],
-                details=row['details']
-            ))
-        
-        return records
+        return [self._row_to_record(row) for row in rows]
 
     def get_record_by_id(self, record_id: int) -> Optional[DetectionRecord]:
         """根据ID获取记录"""
@@ -168,16 +169,7 @@ class DatabaseManager:
         conn.close()
         
         if row:
-            return DetectionRecord(
-                id=row['id'],
-                timestamp=row['timestamp'],
-                type=row['type'],
-                source=row['source'],
-                model_name=row['model_name'],
-                total_objects=row['total_objects'],
-                class_distribution=row['class_distribution'],
-                details=row['details']
-            )
+            return self._row_to_record(row)
         return None
 
     def delete_record(self, record_id: int) -> bool:
@@ -218,6 +210,19 @@ class DatabaseManager:
         
         conn.close()
         return count
+
+    def get_records_with_gps(self) -> List[DetectionRecord]:
+        """获取所有带 GPS 坐标的记录"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM detection_history
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+            ORDER BY id DESC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        return [self._row_to_record(row) for row in rows]
 
     def export_to_csv(self, records: List[DetectionRecord], csv_path: str):
         """导出记录到CSV文件"""

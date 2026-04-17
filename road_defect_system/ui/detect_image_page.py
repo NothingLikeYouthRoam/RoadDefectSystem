@@ -11,6 +11,7 @@ class DetectImagePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._image_path = None
+        self._gps = None  # (lat, lon) or None
         self._annotated_image = None  # numpy annotated image for export
         self._display_size = None     # 缓存展示区尺寸，固定不变
         self._init_ui()
@@ -82,6 +83,17 @@ class DetectImagePage(QWidget):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        # GPS 位置信息
+        gps_group = QGroupBox('位置信息')
+        gps_group.setStyleSheet(AppStyles.get_groupbox_style())
+        gps_layout = QHBoxLayout(gps_group)
+        self.gps_label = QLabel('无位置信息')
+        self.gps_label.setFont(QFont('Microsoft YaHei', 9))
+        c = AppStyles.COLORS
+        self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
+        gps_layout.addWidget(self.gps_label)
+        layout.addWidget(gps_group)
 
         # 统计卡片
         stats_group = QGroupBox('统计摘要')
@@ -164,6 +176,20 @@ class DetectImagePage(QWidget):
 
         self._image_path = file_path
         self._annotated_image = None
+        self._gps = None
+
+        # 提取 GPS
+        from utils.image_utils import extract_gps
+        gps = extract_gps(file_path)
+        c = AppStyles.COLORS
+        if gps:
+            self._gps = gps
+            self.gps_label.setText(f'{gps[0]:.6f}, {gps[1]:.6f}')
+            self.gps_label.setStyleSheet(f'color: {c["success"]}; border: none;')
+        else:
+            self._gps = None
+            self.gps_label.setText('无位置信息')
+            self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
 
         # 首次打开：记下 placeholder 占据的区域尺寸，之后始终用这个尺寸
         if self._display_size is None:
@@ -345,7 +371,9 @@ class DetectImagePage(QWidget):
                 model_name='best.pt',
                 total_objects=len(detections),
                 class_distribution=class_dist,
-                details=details
+                details=details,
+                latitude=self._gps[0] if self._gps else None,
+                longitude=self._gps[1] if self._gps else None,
             )
 
             db = DatabaseManager()
@@ -377,7 +405,11 @@ class DetectImagePage(QWidget):
     def _on_clear(self):
         self._image_path = None
         self._annotated_image = None
+        self._gps = None
         self._update_stats(0, 0, 0.0, 0.0)
+        c = AppStyles.COLORS
+        self.gps_label.setText('无位置信息')
+        self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
         self.result_table.setRowCount(0)
 
         # 恢复图表占位

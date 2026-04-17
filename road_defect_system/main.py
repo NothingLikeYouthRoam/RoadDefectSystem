@@ -3,6 +3,7 @@
 基于 YOLOv8 和 PyQt6
 """
 import sys
+import PyQt6.QtWebEngineWidgets
 from styles import AppStyles
 
 

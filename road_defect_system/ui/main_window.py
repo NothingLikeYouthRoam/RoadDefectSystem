@@ -7,7 +7,7 @@ from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor, QBrush, QIcon, QPen, Q
 
 from ui.detect_image_page import DetectImagePage
 from ui.detect_video_page import DetectVideoPage
-from ui.detect_camera_page import DetectCameraPage
+from ui.map_page import MapPage
 from ui.history_page import HistoryPage
 from ui.model_manage_page import ModelManagePage
 from ui.metrics_page import MetricsPage
@@ -140,11 +140,11 @@ class MainWindow(QMainWindow):
             ('section', '检测'),
             ('image', '图片识别'),
             ('video', '视频识别'),
-            ('camera', '摄像头识别'),
             ('section', '管理'),
             ('history', '检测历史'),
             ('model', '模型管理'),
             ('metrics', '指标展示'),
+            ('map', '缺陷地图'),
         ]
 
         for entry in nav_data:
@@ -243,8 +243,9 @@ class MainWindow(QMainWindow):
             'icon_label': icon_label, 'icon_type': icon_type,
             'text_label': text_label, 'key': text, 'selected': False
         }
-        item_data['key'] = {'图片识别': 'image', '视频识别': 'video', '摄像头识别': 'camera',
-                            '检测历史': 'history', '模型管理': 'model', '指标展示': 'metrics'}[text]
+        item_data['key'] = {'图片识别': 'image', '视频识别': 'video',
+                            '检测历史': 'history', '模型管理': 'model', '指标展示': 'metrics',
+                            '缺陷地图': 'map'}[text]
         widget.mousePressEvent = lambda e, d=item_data: self._on_nav_click(d)
         return item_data
 
@@ -274,8 +275,9 @@ class MainWindow(QMainWindow):
         target_index = self.page_keys.index(item_data['key'])
         self._animate_page_switch(target_index)
 
-        titles = {'image': '图片识别', 'video': '视频识别', 'camera': '摄像头识别',
-                  'history': '检测历史', 'model': '模型管理', 'metrics': '指标展示'}
+        titles = {'image': '图片识别', 'video': '视频识别',
+                  'history': '检测历史', 'model': '模型管理', 'metrics': '指标展示',
+                  'map': '缺陷地图'}
         self.page_title_label.setText(titles.get(item_data['key'], ''))
 
     def _animate_page_switch(self, target_index):
@@ -283,6 +285,11 @@ class MainWindow(QMainWindow):
         if current_index == target_index:
             return
         target_page = self.pages[self.page_keys[target_index]]
+        # QWebEngineView 不兼容 QGraphicsOpacityEffect，直接切换
+        from ui.map_page import MapPage
+        if isinstance(target_page, MapPage):
+            self.stack.setCurrentIndex(target_index)
+            return
         if not hasattr(target_page, '_opacity_effect') or target_page._opacity_effect is None:
             effect = QGraphicsOpacityEffect(target_page)
             target_page.setGraphicsEffect(effect)
@@ -349,10 +356,11 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.pages = {
-            'image': DetectImagePage(), 'video': DetectVideoPage(), 'camera': DetectCameraPage(),
+            'image': DetectImagePage(), 'video': DetectVideoPage(),
             'history': HistoryPage(), 'model': ModelManagePage(), 'metrics': MetricsPage(),
+            'map': MapPage(),
         }
-        self.page_keys = ['image', 'video', 'camera', 'history', 'model', 'metrics']
+        self.page_keys = ['image', 'video', 'history', 'model', 'metrics', 'map']
         for key in self.page_keys:
             self.stack.addWidget(self.pages[key])
         content_layout.addWidget(self.stack)
