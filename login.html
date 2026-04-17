@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统登录</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #0a0e1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+        }
+
+        /* 数字雨画布 */
+        #rain-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        /* 背景光晕 */
+        .bg-glow {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(120px);
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        .bg-glow-1 {
+            width: 500px;
+            height: 500px;
+            background: rgba(0, 180, 255, 0.08);
+            top: -100px;
+            left: -100px;
+        }
+
+        .bg-glow-2 {
+            width: 400px;
+            height: 400px;
+            background: rgba(0, 120, 255, 0.06);
+            bottom: -80px;
+            right: -80px;
+        }
+
+        /* 登录卡片 */
+        .login-card {
+            position: relative;
+            z-index: 10;
+            width: 420px;
+            padding: 48px 40px 40px;
+            background: rgba(12, 18, 36, 0.75);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border-radius: 20px;
+            border: 1px solid rgba(0, 170, 255, 0.15);
+            box-shadow:
+                0 0 40px rgba(0, 140, 255, 0.08),
+                0 25px 60px rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        /* 卡片顶部光带 */
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00b4ff, #0066ff, transparent);
+            border-radius: 2px;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 36px;
+        }
+
+        .login-header .logo-icon {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 16px;
+            background: linear-gradient(135deg, #00b4ff, #0055dd);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 24px rgba(0, 120, 255, 0.25);
+        }
+
+        .login-header .logo-icon svg {
+            width: 28px;
+            height: 28px;
+            fill: white;
+        }
+
+        .login-header h1 {
+            color: #e8f0ff;
+            font-size: 22px;
+            font-weight: 600;
+            letter-spacing: 2px;
+        }
+
+        .login-header p {
+            color: rgba(160, 185, 230, 0.6);
+            font-size: 13px;
+            margin-top: 8px;
+            letter-spacing: 1px;
+        }
+
+        /* 输入框组 */
+        .input-group {
+            position: relative;
+            margin-bottom: 22px;
+        }
+
+        .input-group .input-icon {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 18px;
+            height: 18px;
+            fill: rgba(100, 160, 255, 0.4);
+            transition: fill 0.3s;
+        }
+
+        .input-group input {
+            width: 100%;
+            height: 50px;
+            padding: 0 18px 0 48px;
+            background: rgba(0, 30, 80, 0.3);
+            border: 1px solid rgba(0, 120, 255, 0.15);
+            border-radius: 12px;
+            color: #c8deff;
+            font-size: 15px;
+            outline: none;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .input-group input::placeholder {
+            color: rgba(100, 150, 220, 0.4);
+            font-size: 14px;
+        }
+
+        .input-group input:focus {
+            border-color: rgba(0, 170, 255, 0.5);
+            background: rgba(0, 30, 80, 0.45);
+            box-shadow: 0 0 20px rgba(0, 140, 255, 0.1), inset 0 0 20px rgba(0, 100, 255, 0.03);
+        }
+
+        .input-group input:focus ~ .input-icon,
+        .input-group input:focus + .input-icon {
+            fill: rgba(0, 180, 255, 0.7);
+        }
+
+        .input-group:focus-within .input-icon {
+            fill: rgba(0, 180, 255, 0.7);
+        }
+
+        /* 记住密码 & 忘记密码 */
+        .login-options {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 28px;
+            font-size: 13px;
+        }
+
+        .login-options label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(160, 185, 230, 0.6);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .login-options label input[type="checkbox"] {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border: 1px solid rgba(0, 120, 255, 0.3);
+            border-radius: 4px;
+            background: rgba(0, 30, 80, 0.3);
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s;
+        }
+
+        .login-options label input[type="checkbox"]:checked {
+            background: linear-gradient(135deg, #0088ff, #0055dd);
+            border-color: #0088ff;
+        }
+
+        .login-options label input[type="checkbox"]:checked::after {
+            content: '';
+            position: absolute;
+            left: 4.5px;
+            top: 1.5px;
+            width: 5px;
+            height: 9px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+
+        .login-options a {
+            color: rgba(0, 170, 255, 0.7);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .login-options a:hover {
+            color: #00b4ff;
+        }
+
+        /* 登录按钮 */
+        .login-btn {
+            width: 100%;
+            height: 50px;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #0088ff, #0055dd);
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: 4px;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .login-btn:hover {
+            box-shadow: 0 8px 30px rgba(0, 100, 255, 0.35);
+            transform: translateY(-1px);
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 15px rgba(0, 100, 255, 0.25);
+        }
+
+        /* 按钮光效 */
+        .login-btn::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -60%;
+            width: 40%;
+            height: 200%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+            transform: skewX(-20deg);
+            animation: btnShine 3s ease-in-out infinite;
+        }
+
+        @keyframes btnShine {
+            0%, 100% { left: -60%; }
+            50% { left: 120%; }
+        }
+
+        /* 底部注册提示 */
+        .login-footer {
+            text-align: center;
+            margin-top: 28px;
+            font-size: 13px;
+            color: rgba(160, 185, 230, 0.5);
+        }
+
+        .login-footer a {
+            color: #00aaff;
+            text-decoration: none;
+            margin-left: 4px;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .login-footer a:hover {
+            color: #33ccff;
+        }
+
+        /* 响应式 */
+        @media (max-width: 480px) {
+            .login-card {
+                width: 90vw;
+                padding: 36px 24px 32px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 数字雨 -->
+    <canvas id="rain-canvas"></canvas>
+
+    <!-- 背景光晕 -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <!-- 登录卡片 -->
+    <div class="login-card">
+        <div class="login-header">
+            <div class="logo-icon">
+                <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+            </div>
+            <h1>系统登录</h1>
+            <p>Welcome Back</p>
+        </div>
+
+        <div class="input-group">
+            <svg class="input-icon" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            <input type="text" placeholder="请输入用户名" autocomplete="off">
+        </div>
+
+        <div class="input-group">
+            <svg class="input-icon" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+            <input type="password" placeholder="请输入密码">
+        </div>
+
+        <div class="login-options">
+            <label><input type="checkbox"> 记住密码</label>
+            <a href="javascript:;">忘记密码？</a>
+        </div>
+
+        <button class="login-btn">登 录</button>
+
+        <div class="login-footer">
+            还没有账号？<a href="javascript:;">立即注册</a>
+        </div>
+    </div>
+
+    <script>
+        // ===== 数字雨特效 =====
+        const canvas = document.getElementById('rain-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // 自适应尺寸
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        // 字符集：混合数字、拉丁字母、片假名
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ｱｲｳｴｵｶｷｸｹｺ@#$%^&*';
+        const fontSize = 15;
+        let columns = Math.floor(canvas.width / fontSize);
+
+        // 每列的 y 坐标（用于控制落下速度和位置）
+        let drops = [];
+        for (let i = 0; i < columns; i++) {
+            drops[i] = Math.random() * -100;
+        }
+
+        // 青蓝色配色 — 从亮青到深蓝
+        const colors = [
+            'rgba(0, 200, 255, 0.95)',   // 亮青 - 最前端的字符
+            'rgba(0, 160, 255, 0.7)',     // 中蓝
+            'rgba(0, 120, 230, 0.45)',    // 蓝
+            'rgba(0, 80, 200, 0.2)',      // 深蓝 - 尾迹
+        ];
+
+        function draw() {
+            // 半透明黑色覆盖，形成拖尾效果
+            ctx.fillStyle = 'rgba(10, 14, 26, 0.06)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            columns = Math.floor(canvas.width / fontSize);
+
+            for (let i = 0; i < columns; i++) {
+                const char = chars[Math.floor(Math.random() * chars.length)];
+                const x = i * fontSize;
+                const y = drops[i] * fontSize;
+
+                // 最前端的字符最亮
+                ctx.fillStyle = colors[0];
+                ctx.font = fontSize + 'px monospace';
+                ctx.fillText(char, x, y);
+
+                // 绘制尾迹（渐变淡出）
+                for (let t = 1; t <= 3; t++) {
+                    const trailY = y - t * fontSize;
+                    if (trailY > 0) {
+                        const trailChar = chars[Math.floor(Math.random() * chars.length)];
+                        ctx.fillStyle = colors[t];
+                        ctx.fillText(trailChar, x, trailY);
+                    }
+                }
+
+                // 到底部后重置（加随机延迟使各列不同步）
+                drops[i]++;
+                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                    drops[i] = Math.random() * -20;
+                }
+            }
+        }
+
+        // 控制帧率，不要太快
+        setInterval(draw, 45);
+    </script>
+</body>
+</html>

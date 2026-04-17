@@ -1,0 +1,23 @@
+Python: D:\Python\proj\.venv\Scripts\python.exe
+CWD: D:\Python\proj\road_defect_system
+Python version: 3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]
+--- Step 1: import PyQt6 ---
+OK
+--- Step 2: create QApplication ---
+OK
+--- Step 3: import styles ---
+OK
+--- Step 4: import LoginDialog ---
+OK
+--- Step 5: create LoginDialog ---
+OK
+--- Step 6: show LoginDialog ---
+OK
+--- Step 7: processEvents ---
+OK
+--- Step 8: importing MainWindow ---
+OK
+--- Step 9: importing detector ---
+OK
+=== ALL STEPS PASSED ===
+如果看到这行说明程序本身没问题，是 PyCharm 环境的问题

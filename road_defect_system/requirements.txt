@@ -1,0 +1,7 @@
+pyqt6
+matplotlib
+numpy
+pandas
+opencv-python
+ultralytics
+requests
