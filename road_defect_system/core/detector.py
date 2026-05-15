@@ -6,22 +6,25 @@ from typing import Optional, List, Tuple
 import numpy as np
 from ultralytics import YOLO
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_MODEL_PATH = os.path.join(_PROJECT_ROOT, "models", "best.pt")
+
 
 class RoadDefectDetector:
     """道路缺陷检测器"""
-    
+
     _instance = None
     _model = None
     _model_path = None
-    
+
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
-    def __init__(self, model_path: str = "models/best.pt", 
-                 conf_thres: float = 0.25, 
-                 iou_thres: float = 0.45, 
+
+    def __init__(self, model_path: str = DEFAULT_MODEL_PATH,
+                 conf_thres: float = 0.25,
+                 iou_thres: float = 0.45,
                  max_det: int = 300):
         # 延迟加载模型，避免初始化阶段阻塞 UI
         self.model_path = model_path
@@ -77,6 +80,7 @@ class RoadDefectDetector:
                 conf=self.conf_thres,
                 iou=self.iou_thres,
                 max_det=self.max_det,
+                device=self.device,
                 verbose=False
             )
             return results[0] if results else None
@@ -95,6 +99,7 @@ class RoadDefectDetector:
                 conf=self.conf_thres,
                 iou=self.iou_thres,
                 max_det=self.max_det,
+                device=self.device,
                 verbose=False
             )
             return results
@@ -113,6 +118,14 @@ class RoadDefectDetector:
     def set_max_det(self, max_det: int):
         """设置最大检测数"""
         self.max_det = max(1, max_det)
+
+    def set_device(self, device: str):
+        """设置推理设备: 'cpu' or 'cuda'"""
+        self._device = device
+
+    @property
+    def device(self):
+        return getattr(self, '_device', 'cpu')
     
     def get_model_info(self) -> dict:
         """获取模型信息"""

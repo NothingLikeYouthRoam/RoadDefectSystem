@@ -81,8 +81,8 @@ class DetectVideoPage(QWidget):
         interval_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
 
         self.interval_spin = QDoubleSpinBox()
-        self.interval_spin.setRange(0.1, 5.0)
-        self.interval_spin.setValue(0.5)
+        self.interval_spin.setRange(0.05, 2.0)
+        self.interval_spin.setValue(0.1)
         self.interval_spin.setSuffix('s')
         self.interval_spin.setFixedWidth(80)
         self.interval_spin.setFont(QFont('Microsoft YaHei', 9))
@@ -259,7 +259,8 @@ class DetectVideoPage(QWidget):
         from core.detector import RoadDefectDetector
         detector = RoadDefectDetector.get_instance()
         if not detector._model:
-            model_path = 'models/best.pt'
+            from core.detector import DEFAULT_MODEL_PATH
+            model_path = DEFAULT_MODEL_PATH
             if not os.path.exists(model_path):
                 QMessageBox.warning(self, '错误',
                     f'模型文件不存在: {model_path}\n请先在模型管理中加载模型')
@@ -289,8 +290,12 @@ class DetectVideoPage(QWidget):
         self.rate_label.setText('0.0%')
         self.max_label.setText('0')
 
-        # 每帧检测：读帧 → 检测 → 显示 → 下一帧
-        # timer=1 让 Qt 尽快触发下一帧，实际帧率由检测速度决定
+        # 根据检测间隔计算 timer 间隔（ms）
+        fps = self._cap.get(cv2.CAP_PROP_FPS) or 30.0
+        interval_sec = self.interval_spin.value()
+        self._skip_frames = max(1, int(fps * interval_sec)) - 1
+        self._frame_idx = 0
+
         self._timer.start(1)
 
     # ── 核心：逐帧检测 ──
@@ -312,29 +317,40 @@ class DetectVideoPage(QWidget):
         self._frame_count += 1
         self.info_labels['current_frame'].setText(str(self._frame_count))
 
-        from core.detector import RoadDefectDetector
-        detector = RoadDefectDetector.get_instance()
-        result = detector.detect(frame)
+        # 按间隔跳帧：只在目标帧执行检测
+        self._frame_idx += 1
+        should_detect = self._frame_idx > self._skip_frames
+        if should_detect:
+            self._frame_idx = 0
+
+        if should_detect:
+            from core.detector import RoadDefectDetector
+            detector = RoadDefectDetector.get_instance()
+            result = detector.detect(frame)
+
+            if result is not None:
+                detections, annotated = detector.parse_results(result)
+
+                raw_count = len(detections)
+                if raw_count > 0:
+                    self._frames_with_detections += 1
+                if raw_count > self._max_detections:
+                    self._max_detections = raw_count
+
+                new_count, _ = self._tracker.update(detections)
+                unique = self._tracker.total_unique
+                self.info_labels['total_detections'].setText(str(unique))
+                self.total_count_label.setText(str(unique))
+                rate = self._frames_with_detections / self._frame_count * 100
+                self.rate_label.setText(f'{rate:.1f}%')
+                self.max_label.setText(str(self._max_detections))
+        else:
+            self._tracker.miss_all()
 
         display_frame = frame
-        if result is not None:
-            detections, annotated = detector.parse_results(result)
-            if annotated is not None:
-                display_frame = annotated
-
-            raw_count = len(detections)
-            if raw_count > 0:
-                self._frames_with_detections += 1
-            if raw_count > self._max_detections:
-                self._max_detections = raw_count
-
-            new_count, _ = self._tracker.update(detections)
-            unique = self._tracker.total_unique
-            self.info_labels['total_detections'].setText(str(unique))
-            self.total_count_label.setText(str(unique))
-            rate = self._frames_with_detections / self._frame_count * 100
-            self.rate_label.setText(f'{rate:.1f}%')
-            self.max_label.setText(str(self._max_detections))
+        active_tracks = self._tracker.active_tracks
+        if active_tracks:
+            display_frame = self._draw_trackingResults(frame, active_tracks)
 
         self._last_screenshot = display_frame
         self._update_display(display_frame)
@@ -387,6 +403,31 @@ class DetectVideoPage(QWidget):
             db.add_record(record)
         except Exception as e:
             print(f"[视频检测] 保存记录失败: {e}")
+
+    def _draw_trackingResults(self, frame, tracks):
+        display = frame.copy()
+        colors = {
+            0: (255, 0, 0),
+            1: (0, 255, 0),
+            2: (0, 0, 255),
+            3: (255, 255, 0),
+            4: (255, 0, 255),
+            5: (0, 255, 255),
+        }
+        for track in tracks:
+            bbox = list(map(int, track['bbox']))
+            track_id = track['id']
+            class_name = track['class_name']
+            confidence = track['confidence']
+            color = colors[track_id % len(colors)]
+            cv2.rectangle(display, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+            label = f'#{track_id} {class_name} {confidence:.2f}'
+            (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(display, (bbox[0], bbox[1] - h - 6),
+                        (bbox[0] + w, bbox[1]), color, -1)
+            cv2.putText(display, label, (bbox[0], bbox[1] - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        return display
 
     def _on_screenshot(self):
         if self._last_screenshot is None:

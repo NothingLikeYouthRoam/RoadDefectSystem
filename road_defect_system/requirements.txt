@@ -7,3 +7,6 @@ opencv-python
 ultralytics
 requests
 folium
+Pillow
+piexif
+python-docx

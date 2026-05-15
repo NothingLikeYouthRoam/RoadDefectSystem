@@ -1,15 +1,23 @@
 """基于 IoU 的简易目标跟踪器，用于跨帧去重。"""
 
-from utils.image_utils import calculate_iou
+# import utils.image_utils
 
 
 class SimpleTracker:
-    def __init__(self, iou_threshold=0.2, max_misses=10):
+    def __init__(self, iou_threshold=0.2, max_misses=8):
         self._tracks = []
         self._next_id = 0
         self._iou_threshold = iou_threshold
         self._max_misses = max_misses
         self._all_unique = []  # 所有出现过的唯一目标（去重后）
+
+    def miss_all(self):
+        """所有未匹配的轨迹增加 miss_count"""
+        for track in self._tracks:
+            track['miss_count'] += 1
+        self._tracks = [
+            t for t in self._tracks if t['miss_count'] <= self._max_misses
+        ]
 
     def update(self, detections):
         """
@@ -74,6 +82,10 @@ class SimpleTracker:
     @property
     def all_unique_detections(self):
         return list(self._all_unique)
+
+    @property
+    def active_tracks(self):
+        return [t.copy() for t in self._tracks]
 
     def reset(self):
         self._tracks.clear()

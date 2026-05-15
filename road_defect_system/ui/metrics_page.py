@@ -5,6 +5,8 @@ import matplotlib
 matplotlib.use('QtAgg')
 import matplotlib.pyplot as plt
 plt.rcParams.update({
+    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'sans-serif'],
+    'axes.unicode_minus': False,
     'figure.facecolor': '#171E28',
     'axes.facecolor': '#171E28',
     'axes.edgecolor': '#262F3D',
@@ -22,10 +24,11 @@ plt.rcParams.update({
 
 from collections import Counter, defaultdict
 from datetime import datetime
+import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox,
-    QTabWidget, QGridLayout, QScrollArea, QSizePolicy,
+    QTabWidget, QGridLayout, QScrollArea, QSizePolicy, QFileDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -71,7 +74,7 @@ class MetricsPage(QWidget):
         top_bar = QWidget()
         top_bar.setStyleSheet('background: transparent;')
         top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(16, 8, 16, 0)
+        top_layout.setContentsMargins(16, 8, 16, 8)
 
         title = QLabel('数据统计大屏')
         title.setFont(QFont('Microsoft YaHei', 14, QFont.Weight.Bold))
@@ -123,9 +126,11 @@ class MetricsPage(QWidget):
         self._overview_tab = QWidget()
         self._defect_tab = QWidget()
         self._trend_tab = QWidget()
+        self._train_tab = QWidget()
         self.tabs.addTab(self._overview_tab, '总览')
         self.tabs.addTab(self._defect_tab, '缺陷分析')
         self.tabs.addTab(self._trend_tab, '趋势分析')
+        self.tabs.addTab(self._train_tab, '训练指标')
         layout.addWidget(self.tabs, 1)
 
     # ── data loading ──
@@ -135,14 +140,24 @@ class MetricsPage(QWidget):
         self._build_overview(records)
         self._build_defect(records)
         self._build_trend(records)
+        self._build_train_tab()
 
     # ── Tab 1: 总览 ──
 
-    def _build_overview(self, records):
-        # 清除旧内容
-        old = self._overview_tab.layout()
-        if old:
+    def _clear_tab(self, tab_widget):
+        """安全清理 tab 内容"""
+        old = tab_widget.layout()
+        if old is not None:
+            while old.count():
+                item = old.takeAt(0)
+                w = item.widget()
+                if w:
+                    w.setParent(None)
+                    w.deleteLater()
             QWidget().setLayout(old)
+
+    def _build_overview(self, records):
+        self._clear_tab(self._overview_tab)
 
         c = AppStyles.COLORS
         root = QVBoxLayout(self._overview_tab)
@@ -186,7 +201,7 @@ class MetricsPage(QWidget):
 
         # ── 检测类型分布饼图 ──
         type_counts = Counter(r.type for r in records)
-        type_display_map = {'image': '图片', 'video': '视频', 'camera': '摄像头'}
+        type_display_map = {'image': '图片', 'video': '视频'}
         pie_data = {type_display_map.get(k, k): v for k, v in type_counts.items()}
 
         pie_group = QGroupBox('检测类型分布')
@@ -215,9 +230,7 @@ class MetricsPage(QWidget):
     # ── Tab 2: 缺陷分析 ──
 
     def _build_defect(self, records):
-        old = self._defect_tab.layout()
-        if old:
-            QWidget().setLayout(old)
+        self._clear_tab(self._defect_tab)
 
         c = AppStyles.COLORS
 
@@ -292,9 +305,7 @@ class MetricsPage(QWidget):
     # ── Tab 3: 趋势分析 ──
 
     def _build_trend(self, records):
-        old = self._trend_tab.layout()
-        if old:
-            QWidget().setLayout(old)
+        self._clear_tab(self._trend_tab)
 
         c = AppStyles.COLORS
         root = QVBoxLayout(self._trend_tab)
@@ -364,3 +375,174 @@ class MetricsPage(QWidget):
             line2_layout.addWidget(
                 AppStyles.create_empty_state('暂无数据', 'chart_placeholder'))
         root.addWidget(line2_group, 1)
+
+    # ── Tab 4: 训练指标 ──
+
+    def _build_train_tab(self):
+        self._clear_tab(self._train_tab)
+        c = AppStyles.COLORS
+        root = QVBoxLayout(self._train_tab)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(12)
+
+        # 导入按钮行
+        btn_row = QHBoxLayout()
+        btn_import = QPushButton('导入训练日志 (results.csv)')
+        btn_import.setFixedHeight(34)
+        btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_import.setFont(QFont('Microsoft YaHei', 9))
+        btn_import.setStyleSheet(AppStyles.get_button_style('primary'))
+        btn_import.clicked.connect(self._on_import_training_log)
+        btn_row.addWidget(btn_import)
+        btn_row.addStretch()
+
+        self._train_status = QLabel('未导入训练日志')
+        self._train_status.setFont(QFont('Microsoft YaHei', 9))
+        self._train_status.setStyleSheet(f'color:{c["text_secondary"]};border:none;')
+        btn_row.addWidget(self._train_status)
+        root.addLayout(btn_row)
+
+        # 滚动区域包裹内容
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet('QScrollArea { border: none; background: transparent; }')
+
+        self._train_content_widget = QWidget()
+        self._train_content = QVBoxLayout(self._train_content_widget)
+        self._train_content.setContentsMargins(0, 0, 0, 0)
+        self._train_content.setSpacing(12)
+        self._train_content.addWidget(AppStyles.create_empty_state(
+            '导入 YOLO 训练输出目录下的 results.csv 文件\n以查看训练指标曲线', 'chart_placeholder'))
+
+        scroll.setWidget(self._train_content_widget)
+        root.addWidget(scroll, 1)
+
+        # 自动加载项目目录下的 results.csv
+        auto_csv = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'results.csv')
+        if os.path.exists(auto_csv):
+            try:
+                import pandas as pd
+                df = pd.read_csv(auto_csv)
+                df.columns = [c.strip() for c in df.columns]
+                if 'epoch' in df.columns:
+                    self._plot_training(df)
+                    self._train_status.setText('已加载: results.csv')
+            except Exception:
+                pass
+
+    def _on_import_training_log(self):
+        csv_path, _ = QFileDialog.getOpenFileName(
+            self, '选择训练日志', '', 'CSV 文件 (*.csv);;所有文件 (*)')
+        if not csv_path:
+            return
+        try:
+            import pandas as pd
+            df = pd.read_csv(csv_path)
+            # 去除列名空格
+            df.columns = [c.strip() for c in df.columns]
+
+            # YOLO results.csv 标准列
+            required = ['epoch']
+            if not all(c in df.columns for c in required):
+                QMessageBox.warning(self, '格式错误', '未找到 epoch 列，请确认是 YOLO 训练日志')
+                return
+
+            self._plot_training(df)
+            self._train_status.setText(f'已加载: {csv_path.split("/")[-1].split(chr(92))[-1]}')
+        except Exception as e:
+            QMessageBox.warning(self, '导入失败', f'无法解析文件: {e}')
+
+    def _plot_training(self, df):
+        c = AppStyles.COLORS
+
+        # 清理旧内容
+        while self._train_content.count():
+            item = self._train_content.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    si = item.layout().takeAt(0)
+                    if si.widget():
+                        si.widget().deleteLater()
+
+        epochs = df['epoch'].values
+
+        # ── Loss 曲线 ──
+        loss_group = QGroupBox('训练损失曲线')
+        loss_group.setStyleSheet(AppStyles.get_groupbox_style())
+        loss_lay = QVBoxLayout(loss_group)
+        loss_lay.setContentsMargins(4, 4, 4, 4)
+
+        loss_canvas = ChartCanvas(width=7, height=3.5)
+        loss_cols = [c for c in ['train/box_loss', 'train/cls_loss', 'train/dfl_loss',
+                                  'val/box_loss', 'val/cls_loss', 'val/dfl_loss']
+                     if c in df.columns]
+        colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4']
+        for i, col in enumerate(loss_cols):
+            label = col.replace('train/', '训练-').replace('val/', '验证-').replace('_', ' ')
+            loss_canvas.axes.plot(epochs, df[col].values, label=label,
+                                  color=colors[i % len(colors)], linewidth=1.5)
+        if loss_cols:
+            loss_canvas.axes.set_xlabel('Epoch')
+            loss_canvas.axes.set_ylabel('Loss')
+            loss_canvas.axes.legend(fontsize=8, loc='upper right')
+            loss_canvas.axes.grid(True, alpha=0.3)
+            loss_canvas.axes.set_title('Loss 曲线', fontsize=11)
+            loss_canvas.fig.tight_layout()
+            loss_lay.addWidget(loss_canvas)
+        self._train_content.addWidget(loss_group)
+
+        # ── mAP / Precision / Recall ──
+        metric_group = QGroupBox('精度指标')
+        metric_group.setStyleSheet(AppStyles.get_groupbox_style())
+        metric_lay = QVBoxLayout(metric_group)
+        metric_lay.setContentsMargins(4, 4, 4, 4)
+
+        metric_canvas = ChartCanvas(width=7, height=3.5)
+        metric_cols = [c for c in ['metrics/precision(B)', 'metrics/recall(B)',
+                                    'metrics/mAP50(B)', 'metrics/mAP50-95(B)']
+                       if c in df.columns]
+        metric_labels = ['Precision', 'Recall', 'mAP@0.5', 'mAP@0.5:0.95']
+        metric_colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444']
+        for i, col in enumerate(metric_cols):
+            idx = ['metrics/precision(B)', 'metrics/recall(B)',
+                   'metrics/mAP50(B)', 'metrics/mAP50-95(B)'].index(col)
+            metric_canvas.axes.plot(epochs, df[col].values, label=metric_labels[idx],
+                                    color=metric_colors[idx], linewidth=1.5)
+        if metric_cols:
+            metric_canvas.axes.set_xlabel('Epoch')
+            metric_canvas.axes.set_ylabel('Value')
+            metric_canvas.axes.legend(fontsize=8, loc='lower right')
+            metric_canvas.axes.grid(True, alpha=0.3)
+            metric_canvas.axes.set_title('Precision / Recall / mAP', fontsize=11)
+            metric_canvas.axes.set_ylim(0, 1.05)
+            metric_canvas.fig.tight_layout()
+            metric_lay.addWidget(metric_canvas)
+        self._train_content.addWidget(metric_group)
+
+        # ── 最终指标汇总 ──
+        summary_group = QGroupBox('最终训练结果')
+        summary_group.setStyleSheet(AppStyles.get_groupbox_style())
+        summary_lay = QHBoxLayout(summary_group)
+        summary_lay.setContentsMargins(12, 10, 12, 10)
+
+        last = df.iloc[-1]
+        summary_items = []
+        for col, label in [('metrics/precision(B)', 'Precision'),
+                           ('metrics/recall(B)', 'Recall'),
+                           ('metrics/mAP50(B)', 'mAP@0.5'),
+                           ('metrics/mAP50-95(B)', 'mAP@0.5:0.95')]:
+            if col in df.columns:
+                summary_items.append((label, f'{last[col]:.4f}'))
+
+        accent_colors = [c['gradient_start'], c['success'], c['accent_amber'], c['error']]
+        for i, (label, value) in enumerate(summary_items):
+            card = AppStyles.create_stat_card(label, value, accent_colors[i % len(accent_colors)])
+            summary_lay.addWidget(card['widget'])
+
+        self._train_content.addWidget(summary_group)
+        self._train_content.addStretch()

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QHeaderView, QScrollArea, QFrame, QSizePolicy,
     QFileDialog, QAbstractItemView, QDialog, QGridLayout,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QSizeF, QMarginsF
 from PyQt6.QtGui import QFont, QPageSize, QPageLayout
 from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtGui import QTextDocument
@@ -18,9 +18,9 @@ from styles import AppStyles
 from database.db_manager import DatabaseManager
 from database.models import DetectionRecord
 
-TYPE_MAP = {'all': '全部', 'image': '图片', 'video': '视频', 'camera': '摄像头'}
-TYPE_REVERSE = {'全部': 'all', '图片': 'image', '视频': 'video', '摄像头': 'camera'}
-TYPE_DISPLAY = {'image': '图片', 'video': '视频', 'camera': '摄像头'}
+TYPE_MAP = {'all': '全部', 'image': '图片', 'video': '视频'}
+TYPE_REVERSE = {'全部': 'all', '图片': 'image', '视频': 'video'}
+TYPE_DISPLAY = {'image': '图片', 'video': '视频'}
 
 
 def _md_to_html(text):
@@ -76,7 +76,7 @@ class HistoryPage(QWidget):
 
         tl.addWidget(self._make_label('类型:'))
         self.type_combo = QComboBox()
-        self.type_combo.addItems(['全部', '图片', '视频', '摄像头'])
+        self.type_combo.addItems(['全部', '图片', '视频'])
         self.type_combo.setFixedWidth(100)
         self.type_combo.setFont(QFont('Microsoft YaHei', 9))
         self.type_combo.setStyleSheet(AppStyles.get_combobox_style())
@@ -96,7 +96,7 @@ class HistoryPage(QWidget):
         for text, variant, func in [
             ('刷新', 'primary', self._on_refresh),
             ('导出CSV', 'outline', self._on_export_csv),
-            ('生成报告', 'success', self._on_generate_report),
+            ('生成报告', 'success', self._on_export_pdf),
             ('对比', 'outline', self._on_compare),
             ('清空历史', 'danger', self._on_clear_all),
         ]:
@@ -394,6 +394,20 @@ class HistoryPage(QWidget):
         sev_text, sev_color = get_severity(r.total_objects)
         severity_html = f'<p><b style="color:{c["text_primary"]};">严重程度:</b> <span style="color:{sev_color};font-weight:bold;">{sev_text}</span></p>'
 
+        # 标注图片
+        import os
+        img_html = ''
+        if r.image_path and os.path.isfile(r.image_path):
+            img_w = max(self.detail_text.viewport().width() - 30, 200)
+            src = 'file:///' + r.image_path.replace('\\', '/')
+            img_html = (f'<div style="text-align:center;margin:8px 0;">'
+                        f'<p><b style="color:{c["text_primary"]};">标注图像</b></p>'
+                        f'<img src="{src}" width="{img_w}" '
+                        f'style="border:1px solid {c["border"]};border-radius:4px;" />'
+                        f'</div>')
+        else:
+            img_html = f'<p style="color:{c["text_disabled"]};font-style:italic;">无标注图像</p>'
+
         self.detail_text.setHtml(f'''<div style="color:{c["text_secondary"]};font-size:9pt;padding:8px;">
             <p><b style="color:{c["text_primary"]};">ID:</b> {r.id}</p>
             <p><b style="color:{c["text_primary"]};">时间:</b> {r.timestamp or "--"}</p>
@@ -403,7 +417,9 @@ class HistoryPage(QWidget):
             <p><b style="color:{c["text_primary"]};">检测数:</b> <span style="color:{c["success"]};font-weight:bold;">{r.total_objects}</span></p>
             {severity_html}
             <p><b style="color:{c["text_primary"]};">类别分布:</b> {r.class_distribution or "--"}</p>
-            {gps_html}<hr style="border:1px solid {c["border"]};">{dh}</div>''')
+            {gps_html}
+            {img_html}
+            <hr style="border:1px solid {c["border"]};">{dh}</div>''')
 
     def _on_delete_record(self):
         sel = self.history_table.selectedItems()
@@ -417,6 +433,14 @@ class HistoryPage(QWidget):
         if QMessageBox.question(self, '确认删除', f'确定要删除记录 #{rec.id} 吗？',
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 ) == QMessageBox.StandardButton.Yes:
+            # 清理标注图片
+            if rec.image_path:
+                import os
+                try:
+                    if os.path.isfile(rec.image_path):
+                        os.remove(rec.image_path)
+                except OSError:
+                    pass
             self._db.delete_record(rec.id)
             self._on_refresh()
 
@@ -434,238 +458,6 @@ class HistoryPage(QWidget):
         except Exception as e:
             QMessageBox.warning(self, '失败', f'导出失败: {e}')
 
-    def _on_generate_report(self):
-        """一键生成 PDF 检测报告"""
-        all_records = self._db.get_all_records()
-        if not all_records:
-            QMessageBox.information(self, '提示', '暂无检测记录，无法生成报告')
-            return
-
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, '保存 PDF 报告',
-            f'road_defect_report_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf',
-            'PDF 文件 (*.pdf)'
-        )
-        if not save_path:
-            return
-
-        try:
-            from utils.image_utils import get_severity
-
-            # ── 统计数据 ──
-            total_records = len(all_records)
-            total_defects = sum(r.total_objects for r in all_records)
-
-            # 各类型数量
-            class_counter = {}
-            severity_counter = {'轻微': 0, '中等': 0, '严重': 0}
-            for r in all_records:
-                dist = r.get_class_distribution_dict()
-                for cls_name, cnt in dist.items():
-                    class_counter[cls_name] = class_counter.get(cls_name, 0) + cnt
-                sev, _ = get_severity(r.total_objects)
-                severity_counter[sev] += 1
-
-            # ── 生成饼图临时文件 ──
-            pie_img_tag = ''
-            tmp_files = []
-            if class_counter:
-                import matplotlib
-                matplotlib.use('Agg')
-                import matplotlib.pyplot as plt
-                styles_setup = getattr(AppStyles, 'setup_matplotlib_style', None)
-                if styles_setup:
-                    styles_setup()
-                fig, ax = plt.subplots(figsize=(5, 4))
-                labels = list(class_counter.keys())
-                values = list(class_counter.values())
-                colors = ['#3B82F6', '#10B981', '#06B6D4', '#8B5CF6', '#F59E0B',
-                          '#EF4444', '#EC4899', '#14B8A6', '#F97316', '#6366F1']
-                ax.pie(values, labels=labels, autopct='%1.1f%%',
-                       colors=colors[:len(labels)], startangle=90,
-                       textprops={'fontsize': 9, 'color': '#F1F5F9'})
-                ax.set_title('缺陷类型分布', fontsize=13, color='#F1F5F9', pad=12)
-                fig.patch.set_facecolor('#171E28')
-                tmp_pie = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                tmp_files.append(tmp_pie.name)
-                fig.savefig(tmp_pie.name, dpi=150, bbox_inches='tight',
-                            facecolor=fig.get_facecolor(), edgecolor='none')
-                plt.close(fig)
-                pie_img_tag = f'<img src="{tmp_pie.name}" width="380">'
-
-            # ── 严重程度分级 HTML ──
-            sev_colors = {'轻微': '#10B981', '中等': '#F59E0B', '严重': '#EF4444'}
-            sev_html = '<table style="width:60%;border-collapse:collapse;margin:10px 0;">'
-            sev_html += '<tr style="border-bottom:2px solid #313D50;">'
-            sev_html += '<th style="text-align:left;padding:8px;color:#8B9AB5;">等级</th>'
-            sev_html += '<th style="text-align:center;padding:8px;color:#8B9AB5;">记录数</th>'
-            sev_html += '<th style="text-align:center;padding:8px;color:#8B9AB5;">占比</th></tr>'
-            for sev in ['轻微', '中等', '严重']:
-                cnt = severity_counter.get(sev, 0)
-                pct = f'{cnt / total_records * 100:.1f}%' if total_records > 0 else '0%'
-                color = sev_colors[sev]
-                sev_html += (
-                    f'<tr style="border-bottom:1px solid #262F3D;">'
-                    f'<td style="padding:6px;"><span style="color:{color};font-weight:bold;">&#9679;</span> {sev}</td>'
-                    f'<td style="text-align:center;padding:6px;">{cnt}</td>'
-                    f'<td style="text-align:center;padding:6px;">{pct}</td></tr>'
-                )
-            sev_html += '</table>'
-
-            # ── 各类型数量表 ──
-            type_html = ''
-            if class_counter:
-                type_html = '<table style="width:60%;border-collapse:collapse;margin:10px 0;">'
-                type_html += '<tr style="border-bottom:2px solid #313D50;">'
-                type_html += '<th style="text-align:left;padding:8px;color:#8B9AB5;">缺陷类型</th>'
-                type_html += '<th style="text-align:center;padding:8px;color:#8B9AB5;">数量</th>'
-                type_html += '<th style="text-align:center;padding:8px;color:#8B9AB5;">占比</th></tr>'
-                for cls_name, cnt in sorted(class_counter.items(), key=lambda x: -x[1]):
-                    pct = f'{cnt / total_defects * 100:.1f}%' if total_defects > 0 else '0%'
-                    type_html += (
-                        f'<tr style="border-bottom:1px solid #262F3D;">'
-                        f'<td style="padding:6px;">{cls_name}</td>'
-                        f'<td style="text-align:center;padding:6px;">{cnt}</td>'
-                        f'<td style="text-align:center;padding:6px;">{pct}</td></tr>'
-                    )
-                type_html += '</table>'
-
-            # ── 最近 N 条记录表格 ──
-            recent = all_records[:20]
-            rec_html = '<table style="width:100%;border-collapse:collapse;margin:10px 0;">'
-            rec_html += '<tr style="border-bottom:2px solid #313D50;">'
-            for h in ['ID', '时间', '类型', '来源', '缺陷数', '严重程度']:
-                rec_html += f'<th style="text-align:center;padding:8px;color:#8B9AB5;">{h}</th>'
-            rec_html += '</tr>'
-            for r in recent:
-                sev, sev_color = get_severity(r.total_objects)
-                td_map = {'image': '图片', 'video': '视频', 'camera': '摄像头'}
-                rec_html += (
-                    f'<tr style="border-bottom:1px solid #262F3D;">'
-                    f'<td style="text-align:center;padding:6px;">{r.id}</td>'
-                    f'<td style="text-align:center;padding:6px;">{r.timestamp or "--"}</td>'
-                    f'<td style="text-align:center;padding:6px;">{td_map.get(r.type, r.type)}</td>'
-                    f'<td style="text-align:center;padding:6px;">{r.source or "--"}</td>'
-                    f'<td style="text-align:center;padding:6px;font-weight:bold;">{r.total_objects}</td>'
-                    f'<td style="text-align:center;padding:6px;color:{sev_color};font-weight:bold;">{sev}</td>'
-                    f'</tr>'
-                )
-            rec_html += '</table>'
-
-            # ── GPS 信息 ──
-            gps_html = ''
-            gps_records = self._db.get_records_with_gps()
-            if gps_records:
-                gps_html = '<h3 style="color:#3B82F6;">GPS 位置信息</h3>'
-                gps_html += '<table style="width:100%;border-collapse:collapse;margin:10px 0;">'
-                gps_html += '<tr style="border-bottom:2px solid #313D50;">'
-                for h in ['ID', '时间', '来源', '纬度', '经度']:
-                    gps_html += f'<th style="text-align:center;padding:8px;color:#8B9AB5;">{h}</th>'
-                gps_html += '</tr>'
-                for r in gps_records[:30]:
-                    gps_html += (
-                        f'<tr style="border-bottom:1px solid #262F3D;">'
-                        f'<td style="text-align:center;padding:6px;">{r.id}</td>'
-                        f'<td style="text-align:center;padding:6px;">{r.timestamp or "--"}</td>'
-                        f'<td style="text-align:center;padding:6px;">{r.source or "--"}</td>'
-                        f'<td style="text-align:center;padding:6px;">{r.latitude:.6f}</td>'
-                        f'<td style="text-align:center;padding:6px;">{r.longitude:.6f}</td>'
-                        f'</tr>'
-                    )
-                gps_html += '</table>'
-
-            # ── 组装 HTML ──
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            html = f'''
-            <html><head><style>
-                body {{
-                    font-family: "Microsoft YaHei", "SimHei", sans-serif;
-                    color: #F1F5F9;
-                    background-color: #171E28;
-                    padding: 24px;
-                }}
-                h1 {{
-                    text-align: center;
-                    color: #3B82F6;
-                    font-size: 22pt;
-                    border-bottom: 2px solid #3B82F6;
-                    padding-bottom: 12px;
-                }}
-                h2 {{
-                    color: #3B82F6;
-                    font-size: 14pt;
-                    margin-top: 24px;
-                    border-left: 4px solid #3B82F6;
-                    padding-left: 10px;
-                }}
-                h3 {{
-                    color: #06B6D4;
-                    font-size: 12pt;
-                }}
-                p {{ color: #8B9AB5; font-size: 10pt; }}
-                table {{ font-size: 9pt; }}
-                td {{ color: #F1F5F9; }}
-                .meta {{ text-align: center; color: #8B9AB5; font-size: 9pt; margin-bottom: 20px; }}
-            </style></head><body>
-            <h1>道路缺陷检测报告</h1>
-            <p class="meta">生成时间：{now}</p>
-
-            <h2>一、总体统计</h2>
-            <p>
-                <b>总记录数：</b>{total_records} &nbsp;&nbsp;
-                <b>总缺陷数：</b>{total_defects} &nbsp;&nbsp;
-                <b>缺陷类型数：</b>{len(class_counter)}
-            </p>
-
-            <h2>二、各类型数量</h2>
-            {type_html}
-
-            <h2>三、类型分布饼图</h2>
-            <div style="text-align:center;">{pie_img_tag}</div>
-
-            <h2>四、严重程度分级统计</h2>
-            <p style="color:#8B9AB5;font-size:9pt;">
-                分级标准：0-2 为轻微，3-5 为中等，6+ 为严重
-            </p>
-            {sev_html}
-
-            <h2>五、最近 {min(len(all_records), 20)} 条检测记录</h2>
-            {rec_html}
-
-            {gps_html}
-
-            </body></html>
-            '''
-
-            # ── 生成 PDF ──
-            doc = QTextDocument()
-            doc.setHtml(html)
-            doc.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-
-            printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
-            printer.setOutputFileName(save_path)
-            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-            printer.setPageMargins(
-                QMarginsF(15, 15, 15, 15),
-                QPageLayout.Unit.Millimeter
-            )
-
-            doc.print(printer)
-
-            # 清理临时文件
-            for f in tmp_files:
-                try:
-                    os.unlink(f)
-                except OSError:
-                    pass
-
-            QMessageBox.information(self, '成功', f'PDF 报告已生成:\n{save_path}')
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.warning(self, '失败', f'生成报告失败: {e}')
 
     def _on_clear_all(self):
         cnt = self._db.get_records_count()
@@ -677,6 +469,112 @@ class HistoryPage(QWidget):
                 ) == QMessageBox.StandardButton.Yes:
             self._db.clear_all_records()
             self._on_refresh()
+
+    def _on_export_pdf(self):
+        """将选中记录导出为 PDF 巡检报告"""
+        sel = self.history_table.selectedItems()
+        if not sel:
+            QMessageBox.information(self, '提示', '请先选择一条检测记录')
+            return
+        row = sel[0].row()
+        if row >= len(self._records):
+            return
+        r = self._records[row]
+
+        from utils.file_utils import save_file_dialog
+        default_name = f'巡检报告_#{r.id}.pdf'
+        pdf_path = save_file_dialog(self, '保存PDF报告', default_name, 'PDF文件 (*.pdf)')
+        if not pdf_path:
+            return
+
+        from utils.image_utils import get_severity
+        td = TYPE_DISPLAY.get(r.type, r.type)
+        sev_text, sev_color = get_severity(r.total_objects)
+
+        # 构建 HTML 报告
+        img_html = ''
+        if r.image_path and os.path.isfile(r.image_path):
+            src = 'file:///' + r.image_path.replace('\\', '/')
+            img_html = (f'<div style="text-align:center;margin:12px 0;">'
+                        f'<img src="{src}" width="520" '
+                        f'style="border:1px solid #ccc;border-radius:4px;" />'
+                        f'<p style="color:#666;font-size:9pt;">标注图像</p></div>')
+
+        gps_html = ''
+        if r.latitude is not None and r.longitude is not None:
+            gps_html = (f'<tr><td style="padding:6px 12px;color:#666;">GPS 坐标</td>'
+                        f'<td style="padding:6px 12px;">{r.latitude:.6f}, {r.longitude:.6f}</td></tr>')
+
+        # 检测详情表
+        detail_rows = ''
+        for d in r.get_details_list():
+            bb = d.get('bbox', [])
+            bs = f'({bb[0]:.0f},{bb[1]:.0f},{bb[2]:.0f},{bb[3]:.0f})' if len(bb) == 4 else '--'
+            detail_rows += (f'<tr><td style="padding:4px 10px;border-bottom:1px solid #eee;">'
+                            f'{d.get("class","--")}</td>'
+                            f'<td style="padding:4px 10px;border-bottom:1px solid #eee;">'
+                            f'{d.get("confidence",0):.3f}</td>'
+                            f'<td style="padding:4px 10px;border-bottom:1px solid #eee;">'
+                            f'{bs}</td></tr>')
+
+        detail_table = ''
+        if detail_rows:
+            detail_table = (f'<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
+                            f'<tr style="background:#f0f0f0;"><th style="padding:6px 10px;text-align:left;">缺陷类型</th>'
+                            f'<th style="padding:6px 10px;text-align:left;">置信度</th>'
+                            f'<th style="padding:6px 10px;text-align:left;">坐标</th></tr>'
+                            f'{detail_rows}</table>')
+
+        report_html = f'''
+        <html><head><style>
+            body {{ font-family: "Microsoft YaHei", "SimHei", sans-serif; color: #333; margin: 40px; }}
+            h1 {{ color: #1a56db; font-size: 20pt; border-bottom: 3px solid #1a56db; padding-bottom: 8px; }}
+            h2 {{ color: #333; font-size: 13pt; margin-top: 24px; }}
+            .meta {{ background: #f8f9fa; border-radius: 6px; padding: 12px 16px; margin: 12px 0; }}
+            .sev {{ display: inline-block; padding: 3px 12px; border-radius: 12px; color: white; font-weight: bold; font-size: 10pt; }}
+        </style></head><body>
+        <h1>道路缺陷巡检报告</h1>
+        <div class="meta">
+            <table style="width:100%;">
+                <tr><td style="padding:6px 12px;color:#666;width:120px;">报告编号</td>
+                    <td style="padding:6px 12px;">RPT-{r.id:04d}</td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">检测时间</td>
+                    <td style="padding:6px 12px;">{r.timestamp or "--"}</td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">检测类型</td>
+                    <td style="padding:6px 12px;">{td}检测</td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">来源</td>
+                    <td style="padding:6px 12px;">{r.source or "--"}</td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">检测模型</td>
+                    <td style="padding:6px 12px;">{r.model_name or "--"}</td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">缺陷数量</td>
+                    <td style="padding:6px 12px;"><b>{r.total_objects}</b> 个</td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">严重程度</td>
+                    <td style="padding:6px 12px;"><span class="sev" style="background:{sev_color};">{sev_text}</span></td></tr>
+                <tr><td style="padding:6px 12px;color:#666;">类别分布</td>
+                    <td style="padding:6px 12px;">{r.class_distribution or "--"}</td></tr>
+                {gps_html}
+            </table>
+        </div>
+        {img_html}
+        <h2>检测详情</h2>
+        {detail_table}
+        <div style="margin-top:40px;padding-top:12px;border-top:1px solid #ddd;color:#999;font-size:8pt;text-align:center;">
+            本报告由「路巡者」道路缺陷智能检测系统自动生成 &mdash; {datetime.now().strftime('%Y-%m-%d %H:%M')}
+        </div>
+        </body></html>'''
+
+        try:
+            doc = QTextDocument()
+            doc.setHtml(report_html)
+            printer = QPrinter()
+            printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+            printer.setOutputFileName(pdf_path)
+            printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+            printer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout.Unit.Millimeter)
+            doc.print(printer)
+            QMessageBox.information(self, '成功', f'报告已保存到:\n{pdf_path}')
+        except Exception as e:
+            QMessageBox.warning(self, '失败', f'生成PDF失败: {e}')
 
     def _on_compare(self):
         """对比两条检测记录"""
@@ -877,7 +775,7 @@ class _CompareDialog(QDialog):
         dist1_str = ', '.join(f'{k}:{v}' for k, v in dist1.items()) if dist1 else '--'
         dist2_str = ', '.join(f'{k}:{v}' for k, v in dist2.items()) if dist2 else '--'
 
-        type_display = {'image': '图片', 'video': '视频', 'camera': '摄像头'}
+        type_display = {'image': '图片', 'video': '视频'}
 
         compare_items = [
             ('时间', r1.timestamp or '--', r2.timestamp or '--', None),

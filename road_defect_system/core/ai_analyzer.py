@@ -91,7 +91,7 @@ def _record_summary(record) -> str:
 详细列表: {json.dumps(details[:10], ensure_ascii=False) if details else '无'}"""
 
 
-def test_connection(api_key: str, base_url: str, model: str) -> tuple[bool, str]:
+def test_connection(api_key: str, base_url: str, model: str):
     try:
         url = _build_url(base_url)
         resp = requests.post(

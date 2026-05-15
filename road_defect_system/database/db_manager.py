@@ -40,6 +40,7 @@ class DatabaseManager:
             details=row['details'],
             latitude=row['latitude'] if 'latitude' in row.keys() else None,
             longitude=row['longitude'] if 'longitude' in row.keys() else None,
+            image_path=row['image_path'] if 'image_path' in row.keys() else None,
         )
 
     def _init_database(self):
@@ -79,6 +80,8 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE detection_history ADD COLUMN latitude REAL")
         if 'longitude' not in columns:
             cursor.execute("ALTER TABLE detection_history ADD COLUMN longitude REAL")
+        if 'image_path' not in columns:
+            cursor.execute("ALTER TABLE detection_history ADD COLUMN image_path TEXT")
 
         # 预置管理员账号
         cursor.execute("SELECT COUNT(*) FROM users WHERE username = 'admin'")
@@ -98,8 +101,8 @@ class DatabaseManager:
         
         cursor.execute("""
             INSERT INTO detection_history
-            (timestamp, type, source, model_name, total_objects, class_distribution, details, latitude, longitude)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (timestamp, type, source, model_name, total_objects, class_distribution, details, latitude, longitude, image_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record.timestamp,
             record.type,
@@ -109,7 +112,8 @@ class DatabaseManager:
             record.class_distribution,
             record.details,
             record.latitude,
-            record.longitude
+            record.longitude,
+            record.image_path
         ))
         
         record_id = cursor.lastrowid
@@ -118,6 +122,16 @@ class DatabaseManager:
         
         return record_id
 
+    def update_image_path(self, record_id: int, image_path: str):
+        """更新检测记录的标注图片路径"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE detection_history SET image_path = ? WHERE id = ?",
+            (image_path, record_id))
+        conn.commit()
+        conn.close()
+
     def get_all_records(self, limit: int = 1000) -> List[DetectionRecord]:
         """获取所有检测记录"""
         conn = self._get_connection()
@@ -125,7 +139,7 @@ class DatabaseManager:
         
         cursor.execute("""
             SELECT * FROM detection_history
-            ORDER BY id DESC
+            ORDER BY id ASC
             LIMIT ?
         """, (limit,))
         
@@ -152,7 +166,7 @@ class DatabaseManager:
             query += " AND type = ?"
             params.append(record_type)
         
-        query += " ORDER BY id DESC"
+        query += " ORDER BY id ASC"
         
         cursor.execute(query, params)
         rows = cursor.fetchall()
@@ -189,15 +203,17 @@ class DatabaseManager:
         """清空所有记录，返回删除的数量"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         cursor.execute("SELECT COUNT(*) FROM detection_history")
         count = cursor.fetchone()[0]
-        
+
         cursor.execute("DELETE FROM detection_history")
-        
+        # 重置自增ID，让下一条记录从1开始
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name='detection_history'")
+
         conn.commit()
         conn.close()
-        
+
         return count
 
     def get_records_count(self) -> int:
@@ -225,22 +241,26 @@ class DatabaseManager:
         return [self._row_to_record(row) for row in rows]
 
     def export_to_csv(self, records: List[DetectionRecord], csv_path: str):
-        """导出记录到CSV文件"""
+        """导出记录到CSV文件（Excel 兼容）"""
         import csv
-        
+
         with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.writer(f)
-            writer.writerow(['ID', '检测时间', '类型', '来源', '模型名称', '目标总数', '类别分布', '详细结果'])
-            
+            writer = csv.writer(f, dialect='excel')
+            writer.writerow(['ID', '检测时间', '类型', '来源', '模型名称', '目标总数',
+                             '类别分布', '纬度', '经度', '详细结果'])
+
             for record in records:
+                ts = record.timestamp.replace('-', '/') if record.timestamp else ''
                 writer.writerow([
                     record.id,
-                    record.timestamp,
+                    ts,
                     record.type,
                     record.source,
                     record.model_name,
                     record.total_objects,
                     record.class_distribution,
+                    f'{record.latitude:.6f}' if record.latitude else '',
+                    f'{record.longitude:.6f}' if record.longitude else '',
                     record.details
                 ])
 

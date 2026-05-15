@@ -1,15 +1,15 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStackedWidget,
-    QGraphicsOpacityEffect, QApplication
+    QGraphicsOpacityEffect, QApplication, QMessageBox
 )
 from PyQt6.QtCore import Qt, QTimer, QDateTime, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QColor, QBrush, QIcon, QPen, QCloseEvent
 
 from ui.detect_image_page import DetectImagePage
 from ui.detect_video_page import DetectVideoPage
-from ui.map_page import MapPage
 from ui.history_page import HistoryPage
 from ui.model_manage_page import ModelManagePage
+from ui.map_page import MapPage
 from ui.metrics_page import MetricsPage
 from styles import AppStyles
 
@@ -34,7 +34,8 @@ class MainWindow(QMainWindow):
 
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
-        self.showMaximized()
+        self.setStyleSheet(
+            f'background-color: {AppStyles.COLORS["background_main"]};')
         self._init_ui()
 
     def _init_ui(self):
@@ -284,10 +285,9 @@ class MainWindow(QMainWindow):
         current_index = self.stack.currentIndex()
         if current_index == target_index:
             return
-        target_page = self.pages[self.page_keys[target_index]]
-        # QWebEngineView 不兼容 QGraphicsOpacityEffect，直接切换
-        from ui.map_page import MapPage
-        if isinstance(target_page, MapPage):
+        target_page = self.pages.get(self.page_keys[target_index])
+        # FigureCanvas 不兼容 QGraphicsOpacityEffect，直接切换
+        if target_page is None or self.page_keys[target_index] in ('map', 'metrics'):
             self.stack.setCurrentIndex(target_index)
             return
         if not hasattr(target_page, '_opacity_effect') or target_page._opacity_effect is None:
@@ -355,12 +355,15 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(20, 20, 20, 20)
 
         self.stack = QStackedWidget()
-        self.pages = {
-            'image': DetectImagePage(), 'video': DetectVideoPage(),
-            'history': HistoryPage(), 'model': ModelManagePage(), 'metrics': MetricsPage(),
-            'map': MapPage(),
-        }
-        self.page_keys = ['image', 'video', 'history', 'model', 'metrics', 'map']
+        _page_map = [
+            ('image', DetectImagePage), ('video', DetectVideoPage),
+            ('history', HistoryPage), ('model', ModelManagePage),
+            ('map', MapPage), ('metrics', MetricsPage),
+        ]
+        self.pages = {}
+        for key, cls in _page_map:
+            self.pages[key] = cls()
+        self.page_keys = [key for key, _ in _page_map]
         for key in self.page_keys:
             self.stack.addWidget(self.pages[key])
         content_layout.addWidget(self.stack)
@@ -388,6 +391,8 @@ class MainWindow(QMainWindow):
         # 停止各子页面的定时器、后台线程并释放资源
         if hasattr(self, 'pages'):
             for page in self.pages.values():
+                if page is None:
+                    continue
                 # 标记停止，阻止后台线程再往主线程注入回调
                 page._detect_busy = False
                 timer = getattr(page, '_timer', None)

@@ -18,22 +18,31 @@ def extract_gps(image_path: str) -> Optional[Tuple[float, float]]:
         if not exif:
             return None
 
+        # 优先用 get_ifd() 解析 GPS IFD（处理偏移量情况）
         gps_ifd = None
-        for tag_id, value in exif.items():
-            if tag_id == ExifBase.GPSInfo:
-                gps_ifd = value
-                break
+        if hasattr(exif, 'get_ifd'):
+            gps_ifd = exif.get_ifd(ExifBase.GPSInfo)
+        if not gps_ifd:
+            for tag_id, value in exif.items():
+                if tag_id == ExifBase.GPSInfo:
+                    if isinstance(value, dict):
+                        gps_ifd = value
+                    break
         if not gps_ifd:
             return None
 
-        # gps_ifd 可能是 dict 或 int (offset)
-        if isinstance(gps_ifd, int):
-            return None
+        def _to_float(v):
+            if isinstance(v, (int, float)):
+                return float(v)
+            try:
+                return float(v.num) / float(v.den)
+            except Exception:
+                return float(v)
 
         def _dms_to_dd(dms, ref):
-            d, m, s = [float(v) if isinstance(v, (int, float)) else float(v.num) / float(v.den) for v in dms]
+            d, m, s = [_to_float(v) for v in dms]
             dd = d + m / 60.0 + s / 3600.0
-            if ref in ('S', 'W'):
+            if str(ref) in ('S', 'W', b'S', b'W'):
                 dd = -dd
             return dd
 
@@ -254,6 +263,24 @@ def get_severity_color(severity: str) -> str:
         '严重': '#EF4444',
     }
     return severity_colors.get(severity, '#8B9AB5')
+
+
+def save_annotated_image(annotated_bgr: np.ndarray, record_id: int,
+                         source_name: str = "") -> str:
+    """保存标注图片到 output/annotated/，返回绝对路径"""
+    import os
+    out_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'output', 'annotated')
+    os.makedirs(out_dir, exist_ok=True)
+
+    stem = ''
+    if source_name:
+        stem = '_' + os.path.splitext(os.path.basename(source_name))[0]
+    filename = f'{record_id}{stem}.png'
+    path = os.path.join(out_dir, filename)
+    cv2.imwrite(path, annotated_bgr)
+    return os.path.abspath(path)
 
 
 def calculate_iou(box1: List[float], box2: List[float]) -> float:

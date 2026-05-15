@@ -20,6 +20,7 @@ class DetectionRecord:
     details: str = ""  # JSON格式存储详细检测结果
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    image_path: Optional[str] = None  # 标注图片绝对路径
 
     def __post_init__(self):
         if self.timestamp is None:

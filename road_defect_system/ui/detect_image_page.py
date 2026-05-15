@@ -90,20 +90,57 @@ class DetectImagePage(QWidget):
         # GPS 位置信息
         gps_group = QGroupBox('位置信息')
         gps_group.setStyleSheet(AppStyles.get_groupbox_style())
-        gps_layout = QHBoxLayout(gps_group)
+        gps_layout = QVBoxLayout(gps_group)
+        gps_layout.setSpacing(6)
+
+        # 第一行：GPS显示
         self.gps_label = QLabel('无位置信息')
         self.gps_label.setFont(QFont('Microsoft YaHei', 9))
         c = AppStyles.COLORS
         self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
         gps_layout.addWidget(self.gps_label)
+
+        # 第二行：手动输入经纬度（两行布局，避免右侧面板过窄）
+        from PyQt6.QtWidgets import QLineEdit
+
+        coord_row1 = QHBoxLayout()
+        coord_row1.setSpacing(6)
+        lat_label = QLabel('纬度:')
+        lat_label.setFont(QFont('Microsoft YaHei', 9))
+        lat_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
+        coord_row1.addWidget(lat_label)
+        self.lat_input = QLineEdit()
+        self.lat_input.setPlaceholderText('39.9042')
+        self.lat_input.setStyleSheet(AppStyles.get_input_style())
+        coord_row1.addWidget(self.lat_input, 1)
+        gps_layout.addLayout(coord_row1)
+
+        coord_row2 = QHBoxLayout()
+        coord_row2.setSpacing(6)
+        lon_label = QLabel('经度:')
+        lon_label.setFont(QFont('Microsoft YaHei', 9))
+        lon_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
+        coord_row2.addWidget(lon_label)
+        self.lon_input = QLineEdit()
+        self.lon_input.setPlaceholderText('116.3974')
+        self.lon_input.setStyleSheet(AppStyles.get_input_style())
+        coord_row2.addWidget(self.lon_input, 1)
+        btn_apply_gps = QPushButton('应用坐标')
+        btn_apply_gps.setFixedHeight(28)
+        btn_apply_gps.setFont(QFont('Microsoft YaHei', 9))
+        btn_apply_gps.setStyleSheet(AppStyles.get_button_style('outline'))
+        btn_apply_gps.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_apply_gps.clicked.connect(self._on_apply_manual_gps)
+        coord_row2.addWidget(btn_apply_gps)
+        gps_layout.addLayout(coord_row2)
         layout.addWidget(gps_group)
 
-        # 统计卡片
+        # 统计卡片（紧凑2行布局）
         stats_group = QGroupBox('统计摘要')
         stats_group.setStyleSheet(AppStyles.get_groupbox_style())
         stats_layout = QGridLayout(stats_group)
-        stats_layout.setSpacing(12)
-        stats_layout.setContentsMargins(8, 8, 8, 8)
+        stats_layout.setSpacing(4)
+        stats_layout.setContentsMargins(6, 4, 6, 4)
 
         self.stat_labels = {}
         stat_configs = [
@@ -137,7 +174,7 @@ class DetectImagePage(QWidget):
         self.chart_container_layout.setSpacing(0)
         chart_placeholder = AppStyles.create_empty_state('暂无图表数据', 'chart_placeholder')
         self.chart_container_layout.addWidget(chart_placeholder)
-        self.chart_container.setFixedHeight(180)
+        self.chart_container.setFixedHeight(120)
         chart_layout.addWidget(self.chart_container)
         layout.addWidget(chart_group)
 
@@ -155,6 +192,7 @@ class DetectImagePage(QWidget):
         self.result_table.setStyleSheet(AppStyles.get_table_style())
         self.result_table.horizontalHeader().setStretchLastSection(True)
         self.result_table.verticalHeader().setVisible(False)
+        self.result_table.verticalHeader().setDefaultSectionSize(28)
         result_layout.addWidget(self.result_table)
         layout.addWidget(result_group, 1)
         return widget
@@ -196,10 +234,14 @@ class DetectImagePage(QWidget):
             self._gps = gps
             self.gps_label.setText(f'{gps[0]:.6f}, {gps[1]:.6f}')
             self.gps_label.setStyleSheet(f'color: {c["success"]}; border: none;')
+            self.lat_input.setText(f'{gps[0]:.6f}')
+            self.lon_input.setText(f'{gps[1]:.6f}')
         else:
             self._gps = None
             self.gps_label.setText('无位置信息')
             self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
+            self.lat_input.clear()
+            self.lon_input.clear()
 
         # 首次打开：记下 placeholder 占据的区域尺寸，之后始终用这个尺寸
         if self._display_size is None:
@@ -237,7 +279,8 @@ class DetectImagePage(QWidget):
 
         # 确保模型已加载
         if not detector._model:
-            model_path = 'model/best.pt'
+            from core.detector import DEFAULT_MODEL_PATH
+            model_path = DEFAULT_MODEL_PATH
             import os
             if not os.path.exists(model_path):
                 QMessageBox.warning(self, '错误', f'模型文件不存在: {model_path}\n请先在模型管理中加载模型')
@@ -394,7 +437,15 @@ class DetectImagePage(QWidget):
             )
 
             db = DatabaseManager()
-            db.add_record(record)
+            record_id = db.add_record(record)
+
+            # 保存标注图片
+            if self._annotated_image is not None:
+                from utils.image_utils import save_annotated_image
+                path = save_annotated_image(
+                    self._annotated_image, record_id,
+                    source_name=os.path.basename(self._image_path))
+                db.update_image_path(record_id, path)
         except Exception as e:
             print(f"[图片检测] 保存记录失败: {e}")
             import traceback
@@ -442,12 +493,11 @@ class DetectImagePage(QWidget):
         from core.detector import RoadDefectDetector
         detector = RoadDefectDetector.get_instance()
         if not detector._model:
-            model_path = 'model/best.pt'
-            if not os.path.exists(model_path):
-                model_path = 'models/best.pt'
+            from core.detector import DEFAULT_MODEL_PATH
+            model_path = DEFAULT_MODEL_PATH
             if not os.path.exists(model_path):
                 QMessageBox.warning(self, '错误',
-                                    f'模型文件不存在: model/best.pt 或 models/best.pt\n请先在模型管理中加载模型')
+                                    f'模型文件不存在: {model_path}\n请先在模型管理中加载模型')
                 return
             try:
                 detector.load_model(model_path)
@@ -492,7 +542,7 @@ class DetectImagePage(QWidget):
                 if result is None:
                     continue
 
-                detections, _ = detector.parse_results(result)
+                detections, annotated_bgr = detector.parse_results(result)
                 if not detections:
                     # 即使没有检测结果也记录（0 个目标）
                     gps = extract_gps(img_path)
@@ -550,7 +600,16 @@ class DetectImagePage(QWidget):
                     longitude=gps[1] if gps else None,
                 )
                 db = DatabaseManager()
-                db.add_record(record)
+                record_id = db.add_record(record)
+
+                # 保存标注图片
+                if annotated_bgr is not None:
+                    from utils.image_utils import save_annotated_image
+                    img_save_path = save_annotated_image(
+                        annotated_bgr, record_id,
+                        source_name=os.path.basename(img_path))
+                    db.update_image_path(record_id, img_save_path)
+
                 processed += 1
 
             except Exception:
@@ -576,6 +635,26 @@ class DetectImagePage(QWidget):
             )
             QMessageBox.information(self, '批量检测完成', summary)
 
+    def _on_apply_manual_gps(self):
+        """手动输入GPS坐标"""
+        try:
+            lat_text = self.lat_input.text().strip()
+            lon_text = self.lon_input.text().strip()
+            if not lat_text or not lon_text:
+                QMessageBox.information(self, '提示', '请输入纬度和经度')
+                return
+            lat = float(lat_text)
+            lon = float(lon_text)
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                QMessageBox.warning(self, '错误', '坐标范围错误：纬度 -90~90，经度 -180~180')
+                return
+            self._gps = (lat, lon)
+            c = AppStyles.COLORS
+            self.gps_label.setText(f'{lat:.6f}, {lon:.6f}')
+            self.gps_label.setStyleSheet(f'color: {c["success"]}; border: none;')
+        except ValueError:
+            QMessageBox.warning(self, '错误', '请输入有效的数字')
+
     def _on_clear(self):
         self._image_path = None
         self._annotated_image = None
@@ -590,6 +669,8 @@ class DetectImagePage(QWidget):
         c = AppStyles.COLORS
         self.gps_label.setText('无位置信息')
         self.gps_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
+        self.lat_input.clear()
+        self.lon_input.clear()
         self.result_table.setRowCount(0)
 
         # 恢复图表占位

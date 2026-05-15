@@ -33,7 +33,8 @@ class ModelManagePage(QWidget):
         path_label.setStyleSheet(f'color: {c["text_secondary"]}; border: none;')
 
         self.model_path_input = QLineEdit()
-        self.model_path_input.setText('model/best.pt')
+        from core.detector import DEFAULT_MODEL_PATH
+        self.model_path_input.setText(DEFAULT_MODEL_PATH)
         self.model_path_input.setFixedHeight(36)
         self.model_path_input.setFont(QFont('Microsoft YaHei', 9))
         self.model_path_input.setStyleSheet(AppStyles.get_input_style())
@@ -236,6 +237,8 @@ class ModelManagePage(QWidget):
         detector.set_conf_thres(self.conf_spin.value())
         detector.set_iou_thres(self.iou_spin.value())
         detector.set_max_det(self.max_det_spin.value())
+        device = 'cuda' if self.device_combo.currentIndex() == 1 else 'cpu'
+        detector.set_device(device)
         QMessageBox.information(self, '成功', '参数已保存并应用')
 
     def _on_reset_params(self):
